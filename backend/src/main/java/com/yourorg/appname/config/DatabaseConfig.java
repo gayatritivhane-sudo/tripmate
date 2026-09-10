@@ -5,11 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationStrategy;
 import org.springframework.boot.jdbc.DataSourceBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.context.annotation.Profile;
 
 import javax.sql.DataSource;
 import java.net.URI;
@@ -17,7 +17,6 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 
 @Configuration
-@Profile("postgres")
 @ConditionalOnClass(HikariDataSource.class)
 public class DatabaseConfig {
 
@@ -32,6 +31,9 @@ public class DatabaseConfig {
     @Value("${spring.datasource.password:}")
     private String defaultPassword;
 
+    @Value("${spring.datasource.driver-class-name:org.postgresql.Driver}")
+    private String defaultDriver;
+
     @Bean
     @Primary
     public DataSource dataSource() {
@@ -45,9 +47,9 @@ public class DatabaseConfig {
             return createDataSourceFromUrl(databaseUrl.trim());
         }
 
-        log.info("DATABASE_URL not set. Falling back to default spring.datasource.* properties: {}", defaultUrl);
+        log.info("DATABASE_URL not set. Using datasource URL: {}", defaultUrl);
         return DataSourceBuilder.create()
-                .driverClassName("org.postgresql.Driver")
+                .driverClassName(defaultDriver)
                 .url(defaultUrl)
                 .username(defaultUsername)
                 .password(defaultPassword)
@@ -55,9 +57,28 @@ public class DatabaseConfig {
                 .build();
     }
 
+    /**
+     * Safe Flyway migration strategy ensuring that Flyway does not attempt
+     * connection to absent local databases in cloud environments.
+     */
+    @Bean
+    public FlywayMigrationStrategy flywayMigrationStrategy() {
+        return flyway -> {
+            String databaseUrl = System.getenv("DATABASE_URL");
+            if (databaseUrl != null && !databaseUrl.trim().isEmpty()) {
+                log.info("Cloud PostgreSQL detected. Skipping MSSQL Flyway migrations (managed via Hibernate).");
+            } else {
+                try {
+                    flyway.migrate();
+                } catch (Exception e) {
+                    log.warn("Flyway migration failed or database unreachable: {}. Continuing application startup.", e.getMessage());
+                }
+            }
+        };
+    }
+
     private DataSource createDataSourceFromUrl(String databaseUrl) {
         try {
-            // If already formatted as JDBC URL, use directly
             if (databaseUrl.startsWith("jdbc:")) {
                 HikariDataSource ds = new HikariDataSource();
                 ds.setDriverClassName("org.postgresql.Driver");
@@ -65,7 +86,6 @@ public class DatabaseConfig {
                 return ds;
             }
 
-            // Normalize postgres:// to postgresql:// for URI parsing
             String normalizedUrl = databaseUrl;
             if (normalizedUrl.startsWith("postgres://")) {
                 normalizedUrl = "postgresql://" + normalizedUrl.substring("postgres://".length());
@@ -74,7 +94,7 @@ public class DatabaseConfig {
             URI uri = new URI(normalizedUrl);
             String host = uri.getHost();
             int port = (uri.getPort() == -1) ? 5432 : uri.getPort();
-            String path = uri.getPath(); // includes leading '/'
+            String path = uri.getPath();
             String query = uri.getQuery();
 
             String username = null;
@@ -107,7 +127,7 @@ public class DatabaseConfig {
                 dataSource.setPassword(password);
             }
 
-            // Cloud connection pool optimizations
+            // Connection pool tuning for cloud tiers
             dataSource.setMaximumPoolSize(5);
             dataSource.setMinimumIdle(2);
             dataSource.setIdleTimeout(30000);
@@ -116,7 +136,7 @@ public class DatabaseConfig {
 
             return dataSource;
         } catch (Exception e) {
-            log.error("Failed to parse DATABASE_URL: {}. Falling back to default datasource configuration.", e.getMessage());
+            log.error("Failed to parse DATABASE_URL: {}. Falling back to default datasource.", e.getMessage());
             throw new IllegalStateException("Failed to configure PostgreSQL DataSource from DATABASE_URL", e);
         }
     }
