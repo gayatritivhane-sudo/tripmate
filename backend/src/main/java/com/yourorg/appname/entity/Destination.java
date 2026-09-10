@@ -21,7 +21,7 @@ public class Destination {
     @Column(length = 255)
     private String tagline;
 
-    @Column(nullable = false, columnDefinition = "NVARCHAR(MAX)")
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
 
     @Column(name = "image_url", nullable = false, length = 1000)

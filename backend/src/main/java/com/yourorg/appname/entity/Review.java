@@ -23,7 +23,7 @@ public class Review {
     @Column(nullable = false)
     private Integer rating = 5;
 
-    @Column(nullable = false, columnDefinition = "NVARCHAR(MAX)")
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String comment;
 
     @Column(name = "is_verified", nullable = false)
